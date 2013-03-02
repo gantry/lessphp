@@ -1,4 +1,11 @@
 <?php
+/**
+ * @version   $Id: gantrylesscompiler.class.php 4060 2012-10-02 18:03:24Z btowles $
+ * @author    RocketTheme http://www.rockettheme.com
+ * @copyright Copyright (C) 2007 - ${copyright_year} RocketTheme, LLC
+ * @license   http://www.gnu.org/licenses/gpl-2.0.html GNU/GPLv2 only
+ */
+defined('GANTRY_VERSION') or die();
 
 /**
  * lessphp v0.3.8
@@ -15,29 +22,29 @@
  * The less compiler and parser.
  *
  * Converting LESS to CSS is a three stage process. The incoming file is parsed
- * by `lessc_parser` into a syntax tree, then it is compiled into another tree
- * representing the CSS structure by `lessc`. The CSS tree is fed into a
+ * by `GantryLessCompiler_Parser` into a syntax tree, then it is compiled into another tree
+ * representing the CSS structure by `GantryLessCompiler`. The CSS tree is fed into a
  * formatter, like `lessc_formatter` which then outputs CSS as a string.
  *
  * During the first compile, all values are *reduced*, which means that their
  * types are brought to the lowest form before being dump as strings. This
  * handles math equations, variable dereferences, and the like.
  *
- * The `parse` function of `lessc` is the entry point.
+ * The `parse` function of `GantryLessCompiler` is the entry point.
  *
  * In summary:
  *
- * The `lessc` class creates an intstance of the parser, feeds it LESS code,
+ * The `GantryLessCompiler` class creates an intstance of the parser, feeds it LESS code,
  * then transforms the resulting tree to a CSS tree. This class also holds the
  * evaluation context, such as all available mixins and variables at any given
  * time.
  *
- * The `lessc_parser` class is only concerned with parsing its input.
+ * The `GantryLessCompiler_Parser` class is only concerned with parsing its input.
  *
  * The `lessc_formatter` takes a CSS tree, and dumps it to a formatted string,
  * handling things like indentation.
  */
-class lessc {
+class GantryLessCompiler {
 	static public $VERSION = "v0.3.8";
 	static protected $TRUE = array("keyword", "true");
 	static protected $FALSE = array("keyword", "false");
@@ -111,7 +118,17 @@ class lessc {
 
 		$this->addParsedFile($realPath);
 		$parser = $this->makeParser($realPath);
-		$root = $parser->parse(file_get_contents($realPath));
+		$contents = file_get_contents($realPath);
+
+		// see if there is a -custom file for any imports
+		$custom_file = pathinfo($realPath,PATHINFO_FILENAME).'-custom.'.pathinfo($realPath,PATHINFO_EXTENSION);
+		if ($custom_realpath = $this->findImport($custom_file))
+		{
+			$contents .= file_get_contents($custom_realpath);
+			$this->addParsedFile($custom_realpath);
+		}
+
+		$root = $parser->parse($contents);
 
 		// set the parents of all the block props
 		foreach ($root->props as $prop) {
@@ -177,7 +194,7 @@ class lessc {
 	 * Compiling the block involves pushing a fresh environment on the stack,
 	 * and iterating through the props, compiling each one.
 	 *
-	 * See lessc::compileProp()
+	 * See GantryLessCompiler::compileProp()
 	 *
 	 */
 	protected function compileBlock($block) {
@@ -621,7 +638,7 @@ class lessc {
 		case 'mixin':
 			list(, $path, $args, $suffix) = $prop;
 
-			$args = array_map(array($this, "reduce"), (array)$args);
+			$args = @array_map(array($this, "reduce"), (array)$args);
 			$mixins = $this->findBlocks($block, $path, $args);
 
 			if ($mixins === null) {
@@ -1543,7 +1560,7 @@ class lessc {
 	// inject array of unparsed strings into environment as variables
 	protected function injectVariables($args) {
 		$this->pushEnv();
-		$parser = new lessc_parser($this, __METHOD__);
+		$parser = new GantryLessCompiler_Parser($this, __METHOD__);
 		foreach ($args as $name => $strValue) {
 			if ($name{0} != '@') $name = '@'.$name;
 			$parser->count = 0;
@@ -1608,7 +1625,17 @@ class lessc {
 		$this->allParsedFiles = array();
 		$this->addParsedFile($fname);
 
-		$out = $this->compile(file_get_contents($fname), $fname);
+		$contents = file_get_contents($fname);
+
+		// get a -custom file for the main less file
+		$custom_file = pathinfo($fname,PATHINFO_FILENAME).'-custom.'.pathinfo($fname,PATHINFO_EXTENSION);
+		if ($custom_realpath = $this->findImport($custom_file))
+		{
+			$contents .= file_get_contents($custom_realpath);
+			$this->addParsedFile($custom_realpath);
+		}
+
+		$out = $this->compile($contents, $fname);
 
 		$this->importDir = $oldImport;
 
@@ -1720,7 +1747,7 @@ class lessc {
 	}
 
 	protected function makeParser($name) {
-		$parser = new lessc_parser($this, $name);
+		$parser = new GantryLessCompiler_Parser($this, $name);
 		$parser->writeComments = $this->preserveComments;
 
 		return $parser;
@@ -1731,11 +1758,11 @@ class lessc {
 	}
 
 	protected function newFormatter() {
-		$className = "lessc_formatter_lessjs";
+		$className = "GantryLessCompiler_Formatter_Lessjs";
 		if (!empty($this->formatterName)) {
 			if (!is_string($this->formatterName))
 				return $this->formatterName;
-			$className = "lessc_formatter_$this->formatterName";
+			$className = "GantryLessCompiler_Formatter_$this->formatterName";
 		}
 
 		return new $className;
@@ -1957,7 +1984,7 @@ class lessc {
 
 // responsible for taking a string of LESS code and converting it into a
 // syntax tree
-class lessc_parser {
+class GantryLessCompiler_Parser {
 	static protected $nextBlockId = 0; // used to uniquely identify blocks
 
 	static protected $precedence = array(
@@ -2016,12 +2043,12 @@ class lessc_parser {
 
 		if (!self::$operatorString) {
 			self::$operatorString =
-				'('.implode('|', array_map(array('lessc', 'preg_quote'),
+				'('.implode('|', array_map(array('GantryLessCompiler', 'preg_quote'),
 					array_keys(self::$precedence))).')';
 
-			$commentSingle = lessc::preg_quote(self::$commentSingle);
-			$commentMultiLeft = lessc::preg_quote(self::$commentMultiLeft);
-			$commentMultiRight = lessc::preg_quote(self::$commentMultiRight);
+			$commentSingle = GantryLessCompiler::preg_quote(self::$commentSingle);
+			$commentMultiLeft = GantryLessCompiler::preg_quote(self::$commentMultiLeft);
+			$commentMultiRight = GantryLessCompiler::preg_quote(self::$commentMultiRight);
 
 			self::$commentMulti = $commentMultiLeft.'.*?'.$commentMultiRight;
 			self::$whitePattern = '/'.$commentSingle.'[^\n]*\s*|('.self::$commentMulti.')\s*|\s+/Ais';
@@ -2071,7 +2098,7 @@ class lessc_parser {
 	 * functions represent discrete grammatical rules for the language, and
 	 * they are able to capture the text that represents those rules.
 	 *
-	 * Consider the function lessc::keyword(). (all parse functions are
+	 * Consider the function GantryLessCompiler::keyword(). (all parse functions are
 	 * structured the same)
 	 *
 	 * The function takes a single reference argument. When calling the
@@ -2080,7 +2107,7 @@ class lessc_parser {
 	 * argument, advance the position in the buffer, and return true. If it
 	 * fails then it won't advance the buffer and it will return false.
 	 *
-	 * All of these parse functions are powered by lessc::match(), which behaves
+	 * All of these parse functions are powered by GantryLessCompiler::match(), which behaves
 	 * the same way, but takes a literal regular expression. Sometimes it is
 	 * more convenient to use match instead of creating a new function.
 	 *
@@ -2089,7 +2116,7 @@ class lessc_parser {
 	 *
 	 * But, if some of the rules in the chain succeed before one fails, then
 	 * the buffer position will be left at an invalid state. In order to
-	 * avoid this, lessc::seek() is used to remember and set buffer positions.
+	 * avoid this, GantryLessCompiler::seek() is used to remember and set buffer positions.
 	 *
 	 * Before parsing a chain, use $s = $this->seek() to remember the current
 	 * position into $s. Then if a chain fails, use $this->seek($s) to
@@ -2246,7 +2273,7 @@ class lessc_parser {
 	protected function isDirective($dirname, $directives) {
 		// TODO: cache pattern in parser
 		$pattern = implode("|",
-			array_map(array("lessc", "preg_quote"), $directives));
+			array_map(array("GantryLessCompiler", "preg_quote"), $directives));
 		$pattern = '/^(-[a-z-]+-)?(' . $pattern . ')$/i';
 
 		return preg_match($pattern, $dirname);
@@ -2271,7 +2298,7 @@ class lessc_parser {
 
 		if (count($values) == 0) return false;
 
-		$exps = lessc::compressList($values, ' ');
+		$exps = GantryLessCompiler::compressList($values, ' ');
 		return true;
 	}
 
@@ -2369,7 +2396,7 @@ class lessc_parser {
 
 		if (count($values) == 0) return false;
 
-		$value = lessc::compressList($values, ', ');
+		$value = GantryLessCompiler::compressList($values, ', ');
 		return true;
 	}
 
@@ -2531,7 +2558,7 @@ class lessc_parser {
 		$this->eatWhiteDefault = false;
 
 		$stop = array("'", '"', "@{", $end);
-		$stop = array_map(array("lessc", "preg_quote"), $stop);
+		$stop = array_map(array("GantryLessCompiler", "preg_quote"), $stop);
 		// $stop[] = self::$commentMulti;
 
 		if (!is_null($rejectStrs)) {
@@ -2609,7 +2636,7 @@ class lessc_parser {
 
 		// look for either ending delim , escape, or string interpolation
 		$patt = '([^\n]*?)(@\{|\\\\|' .
-			lessc::preg_quote($delim).')';
+			GantryLessCompiler::preg_quote($delim).')';
 
 		$oldWhite = $this->eatWhiteDefault;
 		$this->eatWhiteDefault = false;
@@ -3031,7 +3058,7 @@ class lessc_parser {
 		}
 
 		if (!isset(self::$literalCache[$what])) {
-			self::$literalCache[$what] = lessc::preg_quote($what);
+			self::$literalCache[$what] = GantryLessCompiler::preg_quote($what);
 		}
 
 		return $this->match(self::$literalCache[$what], $m, $eatWhitespace);
@@ -3071,7 +3098,7 @@ class lessc_parser {
 		} else {
 			$validChars = $allowNewline ? "." : "[^\n]";
 		}
-		if (!$this->match('('.$validChars.'*?)'.lessc::preg_quote($what), $m, !$until)) return false;
+		if (!$this->match('('.$validChars.'*?)'.GantryLessCompiler::preg_quote($what), $m, !$until)) return false;
 		if ($until) $this->count -= strlen($what); // give back $what
 		$out = $m[1];
 		return true;
@@ -3241,7 +3268,7 @@ class lessc_parser {
 
 }
 
-class lessc_formatter_classic {
+class GantryLessCompiler_Formatter_Classic {
 	public $indentChar = "  ";
 
 	public $break = "\n";
@@ -3336,24 +3363,22 @@ class lessc_formatter_classic {
 	}
 }
 
-class lessc_formatter_compressed extends lessc_formatter_classic {
+class GantryLessCompiler_Formatter_Compressed extends GantryLessCompiler_Formatter_Classic {
 	public $disableSingle = true;
 	public $open = "{";
 	public $selectorSeparator = ",";
 	public $assignSeparator = ":";
 	public $break = "";
-	public $compressColors = true;
+	public $compressColors = false;
 
 	public function indentStr($n = 0) {
 		return "";
 	}
 }
 
-class lessc_formatter_lessjs extends lessc_formatter_classic {
+class GantryLessCompiler_Formatter_Lessjs extends GantryLessCompiler_Formatter_Classic {
 	public $disableSingle = true;
 	public $breakSelectors = true;
 	public $assignSeparator = ": ";
 	public $selectorSeparator = ",";
 }
-
-
